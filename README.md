@@ -6,8 +6,56 @@ requests. Then the same upgrade again, on the same cluster, with the same
 application, where nothing fails. The only difference between the two passes
 is the workload's Kubernetes manifest.
 
-> **Status: built, not yet run against Azure.** The results section below is
-> filled in from live runs, not predicted.
+## The result
+
+One live run, 25 November 2026, a patch upgrade from Kubernetes 1.36.4 to
+1.36.5 in East US 2. Both passes were graded against
+[`expectations.json`](expectations.json), which was written before the run.
+
+| | unprotected | protected |
+|---|---|---|
+| Terraform | `Apply complete`, exit 0, 606 s | `Apply complete`, exit 0, 646 s |
+| Azure, node pool `provisioningState` | **Succeeded** at 1.36.5 | **Succeeded** at 1.36.5 |
+| Proof the upgrade ran | both nodes 1.36.4 → 1.36.5, both pods replaced | both nodes 1.36.4 → 1.36.5, both pods replaced |
+| Requests before the upgrade | 149, none failed | 149, none failed |
+| Requests during the upgrade | **181 of 3,180 failed** | **0 of 3,517 failed** |
+| Failure windows | two, **30.6 s** and **29.3 s** from first to last failure | none |
+| Longest unbroken run of failures | **29.5 s** | 0 |
+
+The two windows in the unprotected pass were one per node drained, 176 and 535
+seconds into the upgrade; almost every request inside them failed. 167 of the failed requests were refused connections
+and 14 timed out. Nothing in Terraform's output, the pool's state or the
+upgrade's exit code distinguishes the two passes.
+
+## What the run showed that the prediction did not
+
+**Both unprotected replicas were on the same node, twice.** The scheduler put
+both pods on `vmss000000`. When AKS drained it, both were killed in the same
+second (14:12:50), and their replacements were again scheduled together — so
+the second node's drain (14:18:47) killed both again. "Two replicas" gave no
+redundancy at all against a drain. With no readiness probe, each pair of
+replacements was then sent traffic for the twenty seconds before the app
+answered, which is where the refused connections come from.
+
+`Test-DrainReadiness` grades a missing spread constraint as a **warning**, not
+an error, and this run is the case for that being too lenient: it is what made
+each drain a full outage rather than half the requests failing. It stays a
+warning for now because a disruption budget alone would also have prevented
+it — the drain would not have been allowed to evict both — and one run is not
+enough to promote a rule.
+
+**The protected pass's pods were reported Unhealthy, on purpose.** Every new
+pod logged readiness-probe failures for about twenty seconds after it started.
+Those are the same twenty seconds in which the unprotected pass was sending
+users to pods that refused the connection; with a probe, Kubernetes simply
+did not route to them yet. The protected upgrade took 40 seconds longer,
+because each drain waited for a replacement to become ready before evicting
+the next pod.
+
+**The Azure load balancer caused no failures in this run.** Nodes leaving the
+backend pool during the drain were a possible source of errors that no
+manifest setting could fix (`externalTrafficPolicy` is `Cluster` in both
+passes). None appeared in 3,517 requests. One run is not proof it cannot happen.
 
 ## The problem
 
@@ -95,5 +143,28 @@ nightly and deletes any cluster a cancelled run left behind.
 About **$0.30–$0.38 an hour** while it runs, at East US 2 pay-as-you-go
 prices: the AKS control plane is free on the Free tier; three or four
 `Standard_D2als_v7` nodes at $0.0804/hour; 32 GB managed OS disks; the
-Standard load balancer and two public IPs. A drill takes about an hour.
-Nothing is left running afterwards; the resource group is empty and free.
+Standard load balancer and two public IPs. The run above took 45 minutes from
+the first Terraform apply to a verified teardown, so roughly **$0.21**,
+calculated from those rates and the run's own timestamps. Nothing is left
+running afterwards; the resource group is empty and free.
+
+## How it got here
+
+Two drills. The first stopped before creating anything: the tenant ID secret
+had been set by piping it through Windows PowerShell, which stored a trailing
+newline. The Azure CLI sign-in ignored it; Terraform's provider rejected the
+value as an invalid tenant. The second is the run reported above, and passed
+both checks on its first attempt — because the grading had already been
+through fifty unit tests in CI, including every way a pass can be **Unknown**.
+
+## What this does not show
+
+- **One run, one patch upgrade.** A minor-version upgrade drains nodes the
+  same way, but it was not measured here.
+- **Short requests only.** The probe makes a fresh connection five times a
+  second. Long-lived connections and requests in flight during a drain are
+  what `preStop` exists for, and this probe would not see one being cut.
+- **No autoscaling, one workload.** A busy pool where replacements wait for
+  capacity, or a budget shared by many deployments, behaves differently.
+- **Zero failures in 3,517 requests is a measurement, not a guarantee.** It
+  says the protections worked here, at this rate, on this run.
