@@ -108,7 +108,7 @@ if (-not $StaticOnly) {
         }
 
         $state = Get-Field $evidence 'nodePool', 'provisioningState'
-        $summary.Add(("| $pass | $($evidence.fromVersion) → $($evidence.toVersion) | " +
+        $summary.Add(("| $pass | $($evidence.fromVersion) -> $($evidence.toVersion) | " +
                 "$(if ($state) { $state } else { '-' }) (terraform exit $($evidence.terraformExit)) | " +
                 "$($during.Failed) of $($during.Total) | $([math]::Round($during.LongestOutageMs / 1000, 1))s | **$($verdict.Result)** |"))
 

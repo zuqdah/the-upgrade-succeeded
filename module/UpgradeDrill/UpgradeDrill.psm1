@@ -5,9 +5,15 @@ Set-StrictMode -Version Latest
 # it never decides anything.
 
 function Get-Field {
-    # Reads a nested field from either a dictionary (what ConvertFrom-Yaml
-    # returns) or an object (what ConvertFrom-Json returns), and returns $null
-    # for any missing step rather than throwing under strict mode.
+    <#
+    .SYNOPSIS
+    Reads a nested field from a dictionary or an object, or $null if any step is missing.
+
+    .DESCRIPTION
+    ConvertFrom-Yaml returns dictionaries and ConvertFrom-Json returns objects;
+    both reach the same judgements. A missing step returns $null rather than
+    throwing under strict mode, so absence is something the caller decides about.
+    #>
     [CmdletBinding()]
     [OutputType([object])]
     param(
@@ -32,6 +38,10 @@ function Get-Field {
 }
 
 function Get-KeyName {
+    <#
+    .SYNOPSIS
+    The keys of a dictionary or the property names of an object.
+    #>
     [CmdletBinding()]
     [OutputType([object[]])]
     param([AllowNull()][object]$InputObject)

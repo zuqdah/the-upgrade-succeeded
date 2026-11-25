@@ -44,6 +44,7 @@ resource "azurerm_kubernetes_cluster" "lab" {
     node_count                   = 1
     orchestrator_version         = var.kubernetes_version
     only_critical_addons_enabled = true
+    max_pods                     = 110
     os_disk_type                 = "Managed"
     os_disk_size_gb              = 32
     temporary_name_for_rotation  = "systemtmp"
@@ -84,6 +85,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "app" {
   vm_size               = var.vm_size
   node_count            = 2
   orchestrator_version  = each.value
+  max_pods              = 110
   os_disk_type          = "Managed"
   os_disk_size_gb       = 32
 

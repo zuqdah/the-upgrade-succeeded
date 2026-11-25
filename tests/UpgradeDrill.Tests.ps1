@@ -2,7 +2,7 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../module/UpgradeDrill/UpgradeDrill.psm1') -Force
     Import-Module powershell-yaml -ErrorAction Stop
 
-    function New-Sample {
+    function Get-TestSample {
         # 'ok' and 'x' characters, one sample per 200 ms from t=0.
         param([string]$Pattern, [long]$StartMs = 0, [int]$StepMs = 200)
         $i = 0
@@ -36,7 +36,7 @@ spec:
           lifecycle: {preStop: {exec: {command: [sleep, "5"]}}}
 '@
 
-    function New-Budget {
+    function Get-TestBudget {
         param([string]$Field, [object]$Value, [string]$Namespace = 'shop', [string]$App = 'web')
         @"
 ---
@@ -105,12 +105,12 @@ Describe 'Select-UpgradeVersion' {
 
 Describe 'Test-DrainReadiness' {
     It 'finds nothing wrong with a probed, budgeted, spread, gracefully stopping deployment' {
-        $docs = ConvertFrom-Manifest ($deployment + (New-Budget 'minAvailable' 1))
+        $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget 'minAvailable' 1))
         @(Test-DrainReadiness -Document $docs) | Should -BeNullOrEmpty
     }
 
     It 'flags a missing readiness probe as an error' {
-        $docs = ConvertFrom-Manifest (($deployment -replace '(?m)^\s+readinessProbe:.*$\r?\n', '') + (New-Budget 'minAvailable' 1))
+        $docs = ConvertFrom-Manifest (($deployment -replace '(?m)^\s+readinessProbe:.*$\r?\n', '') + (Get-TestBudget 'minAvailable' 1))
         $f = @(Test-DrainReadiness -Document $docs)
         $f.Rule | Should -Be @('NoReadinessProbe')
         $f[0].Severity | Should -Be 'Error'
@@ -121,12 +121,12 @@ Describe 'Test-DrainReadiness' {
     }
 
     It 'does not count a budget in another namespace' {
-        $docs = ConvertFrom-Manifest ($deployment + (New-Budget 'minAvailable' 1 -Namespace 'other'))
+        $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget 'minAvailable' 1 -Namespace 'other'))
         (@(Test-DrainReadiness -Document $docs)).Rule | Should -Contain 'NoDisruptionBudget'
     }
 
     It 'does not count a budget whose selector matches other pods' {
-        $docs = ConvertFrom-Manifest ($deployment + (New-Budget 'minAvailable' 1 -App 'api'))
+        $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget 'minAvailable' 1 -App 'api'))
         (@(Test-DrainReadiness -Document $docs)).Rule | Should -Contain 'NoDisruptionBudget'
     }
 
@@ -136,7 +136,7 @@ Describe 'Test-DrainReadiness' {
         @{ field = 'maxUnavailable'; value = 0 }
         @{ field = 'maxUnavailable'; value = '"0%"' }
     ) {
-        $docs = ConvertFrom-Manifest ($deployment + (New-Budget $field $value))
+        $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget $field $value))
         (@(Test-DrainReadiness -Document $docs)).Rule | Should -Be @('DrainBlocked')
     }
 
@@ -146,18 +146,18 @@ Describe 'Test-DrainReadiness' {
         @{ field = 'maxUnavailable'; value = 1 }
         @{ field = 'maxUnavailable'; value = '"10%"' }
     ) {
-        $docs = ConvertFrom-Manifest ($deployment + (New-Budget $field $value))
+        $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget $field $value))
         @(Test-DrainReadiness -Document $docs) | Should -BeNullOrEmpty
     }
 
     It 'treats a missing replica count as one replica' {
-        $docs = ConvertFrom-Manifest (($deployment -replace '(?m)^  replicas: 2\r?\n', '') + (New-Budget 'maxUnavailable' 1))
+        $docs = ConvertFrom-Manifest (($deployment -replace '(?m)^  replicas: 2\r?\n', '') + (Get-TestBudget 'maxUnavailable' 1))
         (@(Test-DrainReadiness -Document $docs)).Rule | Should -Contain 'SingleReplica'
     }
 
     It 'warns, but does not error, on no preStop and no spread' {
         $bare = $deployment -replace '(?m)^\s+lifecycle:.*$\r?\n', '' -replace '(?ms)^      topologySpreadConstraints:.*?\}\}\}\r?\n', ''
-        $f = @(Test-DrainReadiness -Document (ConvertFrom-Manifest ($bare + (New-Budget 'minAvailable' 1))))
+        $f = @(Test-DrainReadiness -Document (ConvertFrom-Manifest ($bare + (Get-TestBudget 'minAvailable' 1))))
         ($f.Rule | Sort-Object) | Should -Be @('NoGracefulStop', 'NoHostSpread')
         $f.Severity | Should -Not -Contain 'Error'
     }
@@ -171,7 +171,7 @@ Describe 'Test-DrainReadiness' {
               podAffinityTerm: {topologyKey: kubernetes.io/hostname, labelSelector: {matchLabels: {app: web}}}
 
 '@
-        @(Test-DrainReadiness -Document (ConvertFrom-Manifest ($affinity + (New-Budget 'minAvailable' 1)))) | Should -BeNullOrEmpty
+        @(Test-DrainReadiness -Document (ConvertFrom-Manifest ($affinity + (Get-TestBudget 'minAvailable' 1)))) | Should -BeNullOrEmpty
     }
 
     Context 'the lab''s own manifests' {
@@ -206,7 +206,7 @@ Describe 'Test-DrainReadiness' {
 
 Describe 'Measure-ProbeResult' {
     It 'counts a clean window as clean' {
-        $m = Measure-ProbeResult -Sample @(New-Sample '..........')
+        $m = Measure-ProbeResult -Sample @(Get-TestSample '..........')
         $m.Total | Should -Be 10
         $m.Failed | Should -Be 0
         $m.LongestOutageMs | Should -Be 0
@@ -214,19 +214,19 @@ Describe 'Measure-ProbeResult' {
     }
 
     It 'measures a full outage from the first failure to the next success' {
-        $m = Measure-ProbeResult -Sample @(New-Sample '...xxxxx..')
+        $m = Measure-ProbeResult -Sample @(Get-TestSample '...xxxxx..')
         $m.Failed | Should -Be 5
         $m.LongestOutageMs | Should -Be 1000
     }
 
     It 'does not call interleaved failures an outage' {
-        $m = Measure-ProbeResult -Sample @(New-Sample '.x.x.x.x.x')
+        $m = Measure-ProbeResult -Sample @(Get-TestSample '.x.x.x.x.x')
         $m.Failed | Should -Be 5
         $m.LongestOutageMs | Should -Be 200
     }
 
     It 'groups failures into spans separated by quiet gaps' {
-        $samples = @(New-Sample '.x.x.x') + @(New-Sample '.....' -StartMs 1200) + @(New-Sample 'xx.' -StartMs 30000)
+        $samples = @(Get-TestSample '.x.x.x') + @(Get-TestSample '.....' -StartMs 1200) + @(Get-TestSample 'xx.' -StartMs 30000)
         $m = Measure-ProbeResult -Sample $samples -SpanGapMs 5000
         $m.Spans.Count | Should -Be 2
         $m.Spans[0].Failed | Should -Be 3
@@ -234,13 +234,13 @@ Describe 'Measure-ProbeResult' {
     }
 
     It 'sorts samples by time before measuring' {
-        $samples = @(New-Sample '...xx...')
+        $samples = @(Get-TestSample '...xx...')
         [array]::Reverse($samples)
         (Measure-ProbeResult -Sample $samples).LongestOutageMs | Should -Be 400
     }
 
     It 'says so when the window ends mid-outage instead of inventing an end' {
-        $m = Measure-ProbeResult -Sample @(New-Sample '...xxx')
+        $m = Measure-ProbeResult -Sample @(Get-TestSample '...xxx')
         $m.OutageOpenAtEnd | Should -BeTrue
         $m.LongestOutageMs | Should -Be 400
     }
@@ -254,7 +254,7 @@ Describe 'Measure-ProbeResult' {
 
 Describe 'Test-UpgradeHappened' {
     BeforeAll {
-        function New-Snapshot {
+        function Get-TestSnapshot {
             param([string]$Version, [string[]]$PodUid)
             [pscustomobject]@{
                 nodes = @(
@@ -267,24 +267,24 @@ Describe 'Test-UpgradeHappened' {
     }
 
     It 'confirms an upgrade that moved every node and replaced every pod' {
-        $r = Test-UpgradeHappened -Before (New-Snapshot '1.36.4' 'a', 'b') -After (New-Snapshot '1.36.5' 'c', 'd') -FromVersion '1.36.4' -ToVersion '1.36.5'
+        $r = Test-UpgradeHappened -Before (Get-TestSnapshot '1.36.4' 'a', 'b') -After (Get-TestSnapshot '1.36.5' 'c', 'd') -FromVersion '1.36.4' -ToVersion '1.36.5'
         $r.Happened | Should -BeTrue
     }
 
     It 'rejects an upgrade that left a node behind' {
-        $after = New-Snapshot '1.36.5' 'c', 'd'
+        $after = Get-TestSnapshot '1.36.5' 'c', 'd'
         $after.nodes[1].kubeletVersion = 'v1.36.4'
-        (Test-UpgradeHappened -Before (New-Snapshot '1.36.4' 'a', 'b') -After $after -FromVersion '1.36.4' -ToVersion '1.36.5').Happened | Should -BeFalse
+        (Test-UpgradeHappened -Before (Get-TestSnapshot '1.36.4' 'a', 'b') -After $after -FromVersion '1.36.4' -ToVersion '1.36.5').Happened | Should -BeFalse
     }
 
     It 'rejects an upgrade a pod survived, because then nothing was drained' {
-        $r = Test-UpgradeHappened -Before (New-Snapshot '1.36.4' 'a', 'b') -After (New-Snapshot '1.36.5' 'a', 'd') -FromVersion '1.36.4' -ToVersion '1.36.5'
+        $r = Test-UpgradeHappened -Before (Get-TestSnapshot '1.36.4' 'a', 'b') -After (Get-TestSnapshot '1.36.5' 'a', 'd') -FromVersion '1.36.4' -ToVersion '1.36.5'
         $r.Happened | Should -BeFalse
         $r.Detail | Should -Match 'web-a'
     }
 
     It 'is unknown, not true, when the pool did not start at the declared version' {
-        $r = Test-UpgradeHappened -Before (New-Snapshot '1.36.5' 'a') -After (New-Snapshot '1.36.5' 'b') -FromVersion '1.36.4' -ToVersion '1.36.5'
+        $r = Test-UpgradeHappened -Before (Get-TestSnapshot '1.36.5' 'a') -After (Get-TestSnapshot '1.36.5' 'b') -FromVersion '1.36.4' -ToVersion '1.36.5'
         $r.Happened | Should -BeNullOrEmpty
     }
 
@@ -293,16 +293,16 @@ Describe 'Test-UpgradeHappened' {
         @{ case = 'no nodes before'; before = [pscustomobject]@{ nodes = @(); pods = @([pscustomobject]@{ uid = 'a' }) } }
         @{ case = 'no pods before'; before = [pscustomobject]@{ nodes = @([pscustomobject]@{ name = 'n'; kubeletVersion = 'v1.36.4' }); pods = @() } }
     ) {
-        $r = Test-UpgradeHappened -Before $before -After (New-Snapshot '1.36.5' 'c') -FromVersion '1.36.4' -ToVersion '1.36.5'
+        $r = Test-UpgradeHappened -Before $before -After (Get-TestSnapshot '1.36.5' 'c') -FromVersion '1.36.4' -ToVersion '1.36.5'
         $r.Happened | Should -BeNullOrEmpty
     }
 }
 
 Describe 'Get-PassVerdict' {
     BeforeAll {
-        $script:clean = Measure-ProbeResult -Sample @(New-Sample ('.' * 150))
-        $script:outage = Measure-ProbeResult -Sample @(New-Sample (('.' * 1000) + ('x' * 50) + ('.' * 500)) -StartMs 100000)
-        $script:quiet = Measure-ProbeResult -Sample @(New-Sample ('.' * 1500) -StartMs 100000)
+        $script:clean = Measure-ProbeResult -Sample @(Get-TestSample ('.' * 150))
+        $script:outage = Measure-ProbeResult -Sample @(Get-TestSample (('.' * 1000) + ('x' * 50) + ('.' * 500)) -StartMs 100000)
+        $script:quiet = Measure-ProbeResult -Sample @(Get-TestSample ('.' * 1500) -StartMs 100000)
         $script:yes = [pscustomobject]@{ Happened = $true; Detail = 'ok' }
         $script:outageExpected = [pscustomobject]@{ expect = 'outage'; reportedSucceeded = $true }
         $script:cleanExpected = [pscustomobject]@{ expect = 'noFailures'; maxFailed = 0; reportedSucceeded = $true }
@@ -344,7 +344,7 @@ Describe 'Get-PassVerdict' {
     }
 
     It 'is unknown when the app was failing before the upgrade began' {
-        $sick = Measure-ProbeResult -Sample @(New-Sample (('.' * 140) + 'x' * 10))
+        $sick = Measure-ProbeResult -Sample @(Get-TestSample (('.' * 140) + 'x' * 10))
         $v = Invoke-Verdict -Expectation $outageExpected -Upgrade $outage -Baseline $sick
         $v.Result | Should -Be 'Unknown'
         $v.Reasons -join ' ' | Should -Match 'BEFORE the upgrade'
@@ -354,8 +354,8 @@ Describe 'Get-PassVerdict' {
         @{ case = 'short baseline'; baseline = 'short' }
         @{ case = 'short upgrade window'; baseline = 'clean' }
     ) {
-        $b = if ($baseline -eq 'short') { Measure-ProbeResult -Sample @(New-Sample ('.' * 20)) } else { $clean }
-        $u = if ($baseline -eq 'short') { $quiet } else { Measure-ProbeResult -Sample @(New-Sample ('.' * 200)) }
+        $b = if ($baseline -eq 'short') { Measure-ProbeResult -Sample @(Get-TestSample ('.' * 20)) } else { $clean }
+        $u = if ($baseline -eq 'short') { $quiet } else { Measure-ProbeResult -Sample @(Get-TestSample ('.' * 200)) }
         (Invoke-Verdict -Expectation $cleanExpected -Baseline $b -Upgrade $u).Result | Should -Be 'Unknown'
     }
 

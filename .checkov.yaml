@@ -7,3 +7,54 @@ framework:
 quiet: true
 compact: true
 
+skip-check:
+  # The drill IS the upgrade. Any automatic channel would let AKS start its
+  # own upgrade or node-image rollout in the middle of a measured pass, which
+  # is exactly the uncontrolled change the measurement cannot tolerate. The
+  # node OS channel is set to None for the same reason.
+  - CKV_AZURE_171
+
+  # Container Insights needs a Log Analytics workspace that bills per GB
+  # ingested. The cluster lives for about an hour; the evidence that matters --
+  # every probe sample, both node snapshots, the namespace events -- is
+  # collected by the drill and kept as a workflow artifact.
+  - CKV_AZURE_4
+
+  # A private cluster needs the client inside the virtual network. The drill
+  # runs on a GitHub-hosted runner, so it would need a self-hosted runner or a
+  # jump host: more moving parts than the thing being proven. The API server
+  # is instead open to the runner's single address for the life of the run,
+  # and signs in with Entra ID only (local accounts are disabled).
+  - CKV_AZURE_115
+
+  # The uptime SLA is the Standard tier at $0.10 an hour. It changes nothing
+  # about how a node pool upgrade drains nodes, which is all this measures.
+  - CKV_AZURE_170
+
+  # Standard_D2als_v7 has no local temp disk, so an ephemeral OS disk is not
+  # available on it -- and it is the only size this subscription has been able
+  # to place. OS disks are 32 GB managed disks, encrypted at rest by the
+  # platform.
+  - CKV_AZURE_226
+
+  # Customer-managed keys (a disk encryption set) and encryption at host both
+  # need setup outside the lab: a Key Vault and key, or the EncryptionAtHost
+  # feature registered on the subscription. Disks are encrypted at rest with
+  # platform-managed keys either way.
+  - CKV_AZURE_117
+  - CKV_AZURE_227
+
+  # Azure Policy runs Gatekeeper on the system node, and network policy runs
+  # an enforcement agent on every node. The cluster runs one workload with no
+  # pod-to-pod traffic, reached only through a load balancer restricted to the
+  # runner's address. Neither control has anything to act on here.
+  - CKV_AZURE_116
+  - CKV_AZURE_7
+
+  # No Secrets Store CSI driver is installed; the workload holds no secrets.
+  - CKV_AZURE_172
+
+  # CKV_GHA_7 wants workflow_dispatch inputs empty so a caller cannot change
+  # build output. The only input is Destroy's typed confirmation, which builds
+  # nothing and exists to make a manual teardown deliberate.
+  - CKV_GHA_7
