@@ -39,6 +39,7 @@ spec:
     function Get-TestBudget {
         param([string]$Field, [object]$Value, [string]$Namespace = 'shop', [string]$App = 'web')
         @"
+
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -112,7 +113,7 @@ Describe 'Test-DrainReadiness' {
     It 'flags a missing readiness probe as an error' {
         $docs = ConvertFrom-Manifest (($deployment -replace '(?m)^\s+readinessProbe:.*$\r?\n', '') + (Get-TestBudget 'minAvailable' 1))
         $f = @(Test-DrainReadiness -Document $docs)
-        $f.Rule | Should -Be @('NoReadinessProbe')
+        $f.Rule | Should -Be 'NoReadinessProbe'
         $f[0].Severity | Should -Be 'Error'
     }
 
@@ -137,7 +138,7 @@ Describe 'Test-DrainReadiness' {
         @{ field = 'maxUnavailable'; value = '"0%"' }
     ) {
         $docs = ConvertFrom-Manifest ($deployment + (Get-TestBudget $field $value))
-        (@(Test-DrainReadiness -Document $docs)).Rule | Should -Be @('DrainBlocked')
+        (@(Test-DrainReadiness -Document $docs)).Rule | Should -Be 'DrainBlocked'
     }
 
     It 'accepts a budget that allows one eviction: <field> <value>' -ForEach @(

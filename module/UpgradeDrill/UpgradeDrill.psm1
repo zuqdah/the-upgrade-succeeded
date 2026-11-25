@@ -79,7 +79,7 @@ function Select-UpgradeVersion {
         @(Get-KeyName (Get-Field $minor 'patchVersions') | Sort-Object { [version]$_ })
     }
 
-    $patches = & $patchesOf $default
+    $patches = @(& $patchesOf $default)
     if (-not $patches) { throw "The default minor $(Get-Field $default 'version') lists no patch versions." }
     $to = $patches[-1]
 
@@ -94,7 +94,7 @@ function Select-UpgradeVersion {
                 Sort-Object { [version](Get-Field $_ 'version') })
         if (-not $older) { throw "The default minor $defaultVersion has one patch and there is no older minor to start from." }
         $previous = $older[-1]
-        $from = (& $patchesOf $previous)[-1]
+        $from = @(& $patchesOf $previous)[-1]
         $source = Get-Field $previous 'patchVersions'
         $why = "minor upgrade from $(Get-Field $previous 'version') to the default $defaultVersion"
     }
