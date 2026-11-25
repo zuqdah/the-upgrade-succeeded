@@ -157,7 +157,7 @@ Describe 'Test-DrainReadiness' {
     }
 
     It 'warns, but does not error, on no preStop and no spread' {
-        $bare = $deployment -replace '(?m)^\s+lifecycle:.*$\r?\n', '' -replace '(?ms)^      topologySpreadConstraints:.*?\}\}\}\r?\n', ''
+        $bare = $deployment -replace '(?m)^\s+lifecycle:.*$(\r?\n)?', '' -replace '(?ms)^      topologySpreadConstraints:.*?\}\}\}\r?\n', ''
         $f = @(Test-DrainReadiness -Document (ConvertFrom-Manifest ($bare + (Get-TestBudget 'minAvailable' 1))))
         ($f.Rule | Sort-Object) | Should -Be @('NoGracefulStop', 'NoHostSpread')
         $f.Severity | Should -Not -Contain 'Error'
