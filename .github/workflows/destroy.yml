@@ -1,0 +1,73 @@
+name: Destroy
+
+on:
+  schedule:
+    # Nightly. The drill tears itself down even when it fails, so anything
+    # this finds is from a cancelled or crashed run -- and a forgotten cluster
+    # bills about nine dollars a day.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type destroy to confirm.'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: drill
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Remove anything this lab left behind
+    runs-on: ubuntu-latest
+    environment: lab
+    env:
+      TF_VAR_resource_group_name: rg-aksupgrade-lab
+    steps:
+      - name: Check the confirmation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm != 'destroy' }}
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          echo "Confirmation was '$CONFIRM', expected 'destroy'."
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - name: Mask identifiers
+        run: |
+          echo "::add-mask::${{ secrets.AZURE_TENANT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # By listing what is there, not from Terraform state: the drill keeps its
+      # state in the runner and loses it when the job ends, so a state-based
+      # destroy here would find nothing and report success over a live cluster.
+      # The resource group itself stays; it is empty and free, and the drill
+      # identity's permissions are scoped to it.
+      - name: Delete any cluster in the lab group
+        run: |
+          set -euo pipefail
+          clusters=$(az aks list --resource-group "$TF_VAR_resource_group_name" --query "[].name" -o tsv)
+          if [ -z "$clusters" ]; then
+            echo "No cluster left behind."
+            exit 0
+          fi
+          for c in $clusters; do
+            echo "deleting $c"
+            az aks delete --resource-group "$TF_VAR_resource_group_name" --name "$c" --yes --no-wait
+          done
+
+      - name: Confirm nothing is left
+        run: ./scripts/Confirm-Teardown.sh

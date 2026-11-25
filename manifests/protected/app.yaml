@@ -1,0 +1,125 @@
+# The same application, same image, same 20-second warm-up, same node pool
+# settings. What changes is what the manifest tells Kubernetes:
+#
+#   readinessProbe            -- no traffic until the app actually answers
+#   PodDisruptionBudget       -- a drain may not take the last ready replica
+#   topologySpreadConstraints -- replicas prefer different nodes, so one drain
+#                                is never both of them
+#   preStop                   -- keep serving while the endpoint is withdrawn
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: protected
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: protected
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/agentpool: protected
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      # ScheduleAnyway, not DoNotSchedule. During a surge upgrade a cordoned
+      # node still counts as a domain, and a hard constraint can leave the
+      # replacement pod Pending -- which, with the budget below, holds the
+      # drain open until it times out. A preference spreads the replicas
+      # without being able to deadlock the upgrade.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: web
+      containers:
+        - name: web
+          image: busybox:1.36.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "warming up for ${WARMUP_SECONDS}s"
+              sleep "$WARMUP_SECONDS"
+              mkdir -p /srv/www
+              hostname > /srv/www/index.html
+              echo "serving"
+              exec httpd -f -p 8080 -h /srv/www
+          env:
+            - name: WARMUP_SECONDS
+              value: "20"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "10"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: www
+              mountPath: /srv
+      volumes:
+        - name: www
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web
+  namespace: protected
+spec:
+  # One of two may be voluntarily disrupted at a time. minAvailable: 2 would
+  # look safer and is the other way to break an upgrade: no eviction can ever
+  # satisfy it, so the drain waits out its timeout and the upgrade fails.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: protected
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  loadBalancerSourceRanges:
+    - __RUNNER_CIDR__
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 8080

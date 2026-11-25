@@ -1,0 +1,9 @@
+directory:
+  - infra
+  - .github/workflows
+framework:
+  - terraform
+  - github_actions
+quiet: true
+compact: true
+

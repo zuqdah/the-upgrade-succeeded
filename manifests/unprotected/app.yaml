@@ -1,0 +1,90 @@
+# The workload as it is very commonly deployed: two replicas, so it looks
+# highly available, and nothing else. No readiness probe, no disruption
+# budget, no shutdown hook.
+#
+# The application takes WARMUP_SECONDS to start answering after its container
+# starts, as anything that loads configuration, opens connection pools or
+# warms a cache does. That delay is identical in both passes; only the
+# Kubernetes manifest around it changes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unprotected
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: unprotected
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/agentpool: unprotected
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: busybox:1.36.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "warming up for ${WARMUP_SECONDS}s"
+              sleep "$WARMUP_SECONDS"
+              mkdir -p /srv/www
+              hostname > /srv/www/index.html
+              echo "serving"
+              exec httpd -f -p 8080 -h /srv/www
+          env:
+            - name: WARMUP_SECONDS
+              value: "20"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: www
+              mountPath: /srv
+      volumes:
+        - name: www
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: unprotected
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  # Replaced with the runner's address at deploy time, so the only client that
+  # can reach this for the hour it exists is the probe.
+  loadBalancerSourceRanges:
+    - __RUNNER_CIDR__
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 8080

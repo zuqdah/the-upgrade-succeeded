@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_VERSION: "1.16.3"
+
+jobs:
+  powershell:
+    name: Analyze, test, and check the manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tooling
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Force
+          Install-Module powershell-yaml -MinimumVersion 0.4.7 -Force
+
+      - name: Analyze
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module PSScriptAnalyzer -ErrorAction Stop
+
+          # A crashed or unloadable analyzer reports zero findings, which reads
+          # exactly like a clean scan. Assert it loaded before believing it.
+          if (-not (Get-Command Invoke-ScriptAnalyzer -ErrorAction SilentlyContinue)) {
+            throw 'PSScriptAnalyzer did not load. A scan that cannot run must fail, not pass quietly.'
+          }
+
+          $results = @()
+          foreach ($tree in 'module', 'scripts') {
+            $results += Invoke-ScriptAnalyzer -Path $tree -Recurse -ErrorAction Stop
+          }
+          $results += Invoke-ScriptAnalyzer -Path tests -Recurse -ErrorAction Stop `
+            -ExcludeRule PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments
+
+          if ($results.Count) {
+            $results | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message |
+              Out-String -Width 200 | Write-Host
+            throw "PSScriptAnalyzer reported $($results.Count) issue(s)."
+          }
+          Write-Host 'PSScriptAnalyzer is clean.'
+
+      # Every judgement the drill makes -- which versions, what a manifest
+      # predicts, how a probe window is scored, whether a pass is graded at all
+      # -- is a function of plain data and is tested here without a cluster.
+      - name: Test
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'testResults.xml'
+          Invoke-Pester -Configuration $config
+
+      # The manifests are checked by the same analysis the drill grades
+      # against, so a change that quietly removes a protection fails here,
+      # before anything is deployed.
+      - name: Check the manifests predict what is declared
+        shell: pwsh
+        run: ./scripts/Measure-Drill.ps1 -StaticOnly
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: test-results
+          path: testResults.xml
+          if-no-files-found: warn
+
+  terraform:
+    name: Terraform format, validate, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Format
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        run: |
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+
+      - uses: terraform-linters/setup-tflint@v6
+
+      - name: Lint
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+  security:
+    name: Checkov policy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          config_file: .checkov.yaml

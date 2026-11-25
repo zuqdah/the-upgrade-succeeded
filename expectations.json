@@ -1,0 +1,22 @@
+{
+  "probe": {
+    "intervalMs": 200,
+    "minimumBaselineSamples": 100,
+    "minimumSamples": 1000
+  },
+  "passes": {
+    "unprotected": {
+      "staticErrors": ["NoDisruptionBudget", "NoReadinessProbe"],
+      "reportedSucceeded": true,
+      "expect": "outage",
+      "why": "Two replicas and nothing else. Each replacement pod is sent traffic the moment its container starts, twenty seconds before the app answers, and nothing stops the second node's drain evicting the last replica that was answering."
+    },
+    "protected": {
+      "staticErrors": [],
+      "reportedSucceeded": true,
+      "expect": "noFailures",
+      "maxFailed": 0,
+      "why": "The same app, image, warm-up and pool settings. A readiness probe keeps traffic off a pod until it answers, a disruption budget keeps one replica serving through every drain, replicas prefer separate nodes, and a preStop hook keeps the old pod serving while its endpoint is withdrawn."
+    }
+  }
+}
