@@ -145,7 +145,8 @@ prices: the AKS control plane is free on the Free tier; three or four
 `Standard_D2als_v7` nodes at $0.0804/hour; 32 GB managed OS disks; the
 Standard load balancer and two public IPs. The run above took 45 minutes from
 the first Terraform apply to a verified teardown, so roughly **$0.21**,
-calculated from those rates and the run's own timestamps. Nothing is left
+calculated from those rates and the run's own timestamps. Azure's bill for
+it, read from Cost Management afterwards, was **$0.19**. Nothing is left
 running afterwards; the resource group is empty and free.
 
 ## How it got here
